@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings("ignore")
 
-load_dotenv("../.env")
+load_dotenv()
 
 API_KEY     = os.getenv("OPENWEATHER_API_KEY")
 LAT         = os.getenv("LAT")
@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# STYLES — light mood
+# STYLES
 # ============================================================
 st.markdown("""
 <style>
@@ -301,17 +301,19 @@ feature_cols = [
 # ============================================================
 @st.cache_resource
 def load_models():
-    ridge  = joblib.load("../models/ridge.pkl")
-    lasso  = joblib.load("../models/lasso.pkl")
-    gb     = joblib.load("../models/gradient_boosting.pkl")
-    scaler = joblib.load("../models/scaler.pkl")
-    le     = joblib.load("../models/label_encoder.pkl")
+    base   = os.path.dirname(os.path.abspath(__file__))
+    models = os.path.join(base, "..", "models")
+    ridge  = joblib.load(os.path.join(models, "ridge.pkl"))
+    lasso  = joblib.load(os.path.join(models, "lasso.pkl"))
+    gb     = joblib.load(os.path.join(models, "gradient_boosting.pkl"))
+    scaler = joblib.load(os.path.join(models, "scaler.pkl"))
+    le     = joblib.load(os.path.join(models, "label_encoder.pkl"))
     return ridge, lasso, gb, scaler, le
 
 ridge, lasso, gb, scaler, le = load_models()
 
 # ============================================================
-# SIDEBAR — model selector
+# SIDEBAR
 # ============================================================
 st.sidebar.markdown("## Pearls AQI")
 st.sidebar.markdown("---")
@@ -338,12 +340,11 @@ perf_map = {
 perf = perf_map[selected_model_name]
 st.sidebar.markdown(f"**R² Score:** {perf['R²']}")
 st.sidebar.markdown(f"**RMSE:** {perf['RMSE']}")
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("### About")
 st.sidebar.markdown("Data: Open-Meteo + OpenWeather")
 st.sidebar.markdown("Database: MongoDB Atlas")
-st.sidebar.markdown(f"Location: {os.getenv('CITY')}, Sindh, PK")
+st.sidebar.markdown(f"Location: {CITY}, Sindh, PK")
 
 # ============================================================
 # FETCH DATA
@@ -449,12 +450,11 @@ def run_forecast(model):
         }])
 
         if selected_model_name == "Gradient Boosting":
-            scaled   = features[feature_cols]
+            scaled = features[feature_cols]
         else:
-            scaled   = scaler.transform(features[feature_cols])
+            scaled = scaler.transform(features[feature_cols])
 
         pred_aqi = float(max(0, model.predict(scaled)[0]))
-
         hourly_forecasts.append({
             "timestamp":     dt,
             "date":          dt.strftime("%Y-%m-%d"),
@@ -555,7 +555,6 @@ with tab1:
     st.markdown("<br>", unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
-
     with col1:
         fig1 = go.Figure()
         fig1.add_trace(go.Bar(
@@ -584,7 +583,6 @@ with tab1:
         st.plotly_chart(fig2, use_container_width=True)
 
     col3, col4 = st.columns(2)
-
     with col3:
         fig3 = go.Figure()
         fig3.add_trace(go.Scatter(
@@ -647,7 +645,6 @@ with tab2:
     st.markdown("<br>", unsafe_allow_html=True)
 
     col5, col6 = st.columns(2)
-
     with col5:
         daily_hist = hist_df.groupby("date")["aqi"].mean().reset_index()
         fig5 = go.Figure()
@@ -674,7 +671,6 @@ with tab2:
         st.plotly_chart(fig6, use_container_width=True)
 
     col7, col8 = st.columns(2)
-
     with col7:
         fig7 = go.Figure()
         fig7.add_trace(go.Scatter(
@@ -722,9 +718,11 @@ with tab3:
         @st.cache_data
         def compute_shap():
             df         = load_historical()
-            le_enc     = joblib.load("../models/label_encoder.pkl")
-            sc         = joblib.load("../models/scaler.pkl")
-            rdg        = joblib.load("../models/ridge.pkl")
+            base       = os.path.dirname(os.path.abspath(__file__))
+            models_dir = os.path.join(base, "..", "models")
+            le_enc     = joblib.load(os.path.join(models_dir, "label_encoder.pkl"))
+            sc         = joblib.load(os.path.join(models_dir, "scaler.pkl"))
+            rdg        = joblib.load(os.path.join(models_dir, "ridge.pkl"))
             season_map = {"winter": 0, "spring": 1, "summer": 2, "autumn": 3}
             df["time_of_day"] = le_enc.transform(df["time_of_day"])
             df["season"]      = df["season"].map(season_map).fillna(0).astype(int)
@@ -808,7 +806,6 @@ with tab4:
             <div class="rec-item">Seek medical attention immediately if experiencing breathing difficulties</div>
         </div>
         """, unsafe_allow_html=True)
-
     elif max_aqi > 80:
         st.markdown(f"""
         <div class="alert-danger">
@@ -824,7 +821,6 @@ with tab4:
             <div class="rec-item">Keep windows closed during peak pollution hours</div>
         </div>
         """, unsafe_allow_html=True)
-
     elif max_aqi > 60:
         st.markdown(f"""
         <div class="alert-warning">
@@ -839,7 +835,6 @@ with tab4:
             <div class="rec-item">Sensitive groups should stay indoors</div>
         </div>
         """, unsafe_allow_html=True)
-
     elif max_aqi > 40:
         st.markdown(f"""
         <div class="alert-moderate">
@@ -851,7 +846,6 @@ with tab4:
             </div>
         </div>
         """, unsafe_allow_html=True)
-
     else:
         st.markdown(f"""
         <div class="alert-success">
