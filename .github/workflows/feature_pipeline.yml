@@ -1,0 +1,40 @@
+# ============================================================
+# Feature Pipeline — runs every hour
+# Fetches latest data and pushes to MongoDB
+# ============================================================
+
+name: Feature Pipeline
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-feature-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install requests python-dotenv pandas numpy pymongo certifi scikit-learn joblib
+
+      - name: Create .env file
+        run: |
+          echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" >> .env
+          echo "MONGODB_URI=${{ secrets.MONGODB_URI }}"                 >> .env
+          echo "LAT=${{ secrets.LAT }}"                                  >> .env
+          echo "LON=${{ secrets.LON }}"                                  >> .env
+          echo "CITY=${{ secrets.CITY }}"                                >> .env
+
+      - name: Run feature pipeline
+        run: |
+          python feature_pipeline/run_pipeline.py
