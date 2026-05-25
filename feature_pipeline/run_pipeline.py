@@ -5,12 +5,10 @@
 # ============================================================
 
 import os
-import sys
-import pandas as pd
-import numpy as np
 import requests
 import certifi
-from datetime import datetime, timezone, timedelta
+import numpy as np
+from datetime import datetime, timezone, date
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -35,14 +33,32 @@ def get_season(month):
     else:                    return "autumn"
 
 def fetch_current():
+    # weather from OpenWeather
     weather = requests.get(
         f"https://api.openweathermap.org/data/2.5/weather?q={CITY},PK&appid={API_KEY}&units=metric"
     ).json()
-    poll = requests.get(
-        f"http://api.openweathermap.org/data/2.5/air_pollution?lat={LAT}&lon={LON}&appid={API_KEY}"
-    ).json()
 
-    now = datetime.now(timezone.utc)
+    # AQI from Open-Meteo European scale
+    today  = date.today().strftime("%Y-%m-%d")
+    aq_url = (
+        f"https://air-quality-api.open-meteo.com/v1/air-quality?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&hourly=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,european_aqi"
+        f"&start_date={today}&end_date={today}"
+    )
+    aq_data = requests.get(aq_url).json()
+
+    now   = datetime.now(timezone.utc)
+    hour  = now.hour
+    index = min(hour, len(aq_data["hourly"]["european_aqi"]) - 1)
+
+    aqi   = aq_data["hourly"]["european_aqi"][index]
+    pm2_5 = aq_data["hourly"]["pm2_5"][index]
+    pm10  = aq_data["hourly"]["pm10"][index]
+    no2   = aq_data["hourly"]["nitrogen_dioxide"][index]
+    co    = aq_data["hourly"]["carbon_monoxide"][index]
+    o3    = aq_data["hourly"]["ozone"][index]
+
     return {
         "timestamp":   now.strftime("%Y-%m-%d %H:%M:%S"),
         "date":        now.strftime("%Y-%m-%d"),
@@ -53,18 +69,18 @@ def fetch_current():
         "temperature": float(weather["main"]["temp"]),
         "humidity":    int(weather["main"]["humidity"]),
         "wind_speed":  float(weather["wind"]["speed"]),
-        "aqi":         float(poll["list"][0]["main"]["aqi"]),
-        "pm2_5":       float(poll["list"][0]["components"]["pm2_5"]),
-        "pm10":        float(poll["list"][0]["components"]["pm10"]),
-        "no2":         float(poll["list"][0]["components"]["no2"]),
-        "co":          float(poll["list"][0]["components"]["co"]),
-        "o3":          float(poll["list"][0]["components"]["o3"]),
+        "aqi":         float(aqi)   if aqi   is not None else 0.0,
+        "pm2_5":       float(pm2_5) if pm2_5 is not None else 0.0,
+        "pm10":        float(pm10)  if pm10  is not None else 0.0,
+        "no2":         float(no2)   if no2   is not None else 0.0,
+        "co":          float(co)    if co    is not None else 0.0,
+        "o3":          float(o3)    if o3    is not None else 0.0,
     }
 
-def get_lag_features(col, record):
-    client = MongoClient(MONGODB_URI, tls=True, tlsCAFile=certifi.where())
-    db     = client["pearls_aqi"]
-    recent = list(db["aqi_features"].find(
+def get_lag_features(record):
+    client  = MongoClient(MONGODB_URI, tls=True, tlsCAFile=certifi.where())
+    db      = client["pearls_aqi"]
+    recent  = list(db["aqi_engineered"].find(
         {}, {"_id": 0, "aqi": 1}
     ).sort("timestamp", -1).limit(24))
     client.close()
@@ -93,13 +109,8 @@ def get_lag_features(col, record):
 def push_to_mongodb(record):
     client = MongoClient(MONGODB_URI, tls=True, tlsCAFile=certifi.where())
     db     = client["pearls_aqi"]
-
-    # push to raw features
-    db["aqi_features"].insert_one({k: v for k, v in record.items() if k != "_id"})
-
-    # push to engineered features
-    db["aqi_engineered"].insert_one({k: v for k, v in record.items() if k != "_id"})
-
+    db["aqi_features"].insert_one({k: v for k, v in record.items()})
+    db["aqi_engineered"].insert_one({k: v for k, v in record.items()})
     client.close()
     print(f"Pushed record for {record['timestamp']} ✅")
 
@@ -109,7 +120,7 @@ if __name__ == "__main__":
     print(f"Fetched: AQI={record['aqi']}, Temp={record['temperature']}")
 
     print("Computing lag features...")
-    record = get_lag_features(None, record)
+    record = get_lag_features(record)
 
     print("Pushing to MongoDB...")
     push_to_mongodb(record)
