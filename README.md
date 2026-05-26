@@ -1,4 +1,5 @@
-    # Pearls AQI Predictor
+# Pearls AQI Predictor
+
 
 A complete end-to-end machine learning pipeline for predicting Air Quality Index (AQI) in Sukkur, Sindh, Pakistan for the next 3 days using a 100% serverless stack.
 
