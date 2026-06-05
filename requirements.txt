@@ -1,22 +1,11 @@
-# Data fetching
 requests
 python-dotenv
-
-# Database
 pymongo
 certifi
-
-# Data processing
 pandas
 numpy
-
-# Machine learning
-scikit-learn
+scikit-learn==1.3.2
 joblib
-
-# Explainability
 shap
-
-# Dashboard
 streamlit
 plotly
