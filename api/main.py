@@ -44,11 +44,14 @@ app.add_middleware(
 # ============================================================
 # LOAD MODELS
 # ============================================================
-ridge  = joblib.load("../models/ridge.pkl")
-lasso  = joblib.load("../models/lasso.pkl")
-gb     = joblib.load("../models/gradient_boosting.pkl")
-scaler = joblib.load("../models/scaler.pkl")
-le     = joblib.load("../models/label_encoder.pkl")
+base       = os.path.dirname(os.path.abspath(__file__))
+models_dir = os.path.join(base, "..", "models")
+
+gb     = joblib.load(os.path.join(models_dir, "gradient_boosting.pkl"))
+rf     = joblib.load(os.path.join(models_dir, "random_forest.pkl"))
+ridge  = joblib.load(os.path.join(models_dir, "ridge.pkl"))
+scaler = joblib.load(os.path.join(models_dir, "scaler.pkl"))
+le     = joblib.load(os.path.join(models_dir, "label_encoder.pkl"))
 
 feature_cols = [
     "hour", "day", "month",
@@ -87,13 +90,21 @@ def get_mongo_client():
     return MongoClient(MONGODB_URI, tls=True, tlsCAFile=certifi.where())
 
 def get_model(model_name):
-    return {"ridge": ridge, "lasso": lasso, "gradient_boosting": gb}.get(model_name, ridge)
+    return {
+        "gradient_boosting": gb,
+        "random_forest":     rf,
+        "ridge":             ridge
+    }.get(model_name, gb)
+
+def scale_features(model_name, features):
+    if model_name in ["gradient_boosting", "random_forest"]:
+        return features[feature_cols]
+    return scaler.transform(features[feature_cols])
 
 # ============================================================
 # ROUTES
 # ============================================================
 
-# root
 @app.get("/")
 def root():
     return {
@@ -106,11 +117,11 @@ def root():
             "/forecast",
             "/forecast/{model_name}",
             "/historical",
+            "/models",
             "/health"
         ]
     }
 
-# health check
 @app.get("/health")
 def health():
     return {
@@ -118,64 +129,85 @@ def health():
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
-# current AQI
 @app.get("/current")
 def get_current():
     weather = requests.get(
         f"https://api.openweathermap.org/data/2.5/weather?q={CITY},PK&appid={API_KEY}&units=metric"
     ).json()
-    poll = requests.get(
-        f"http://api.openweathermap.org/data/2.5/air_pollution?lat={LAT}&lon={LON}&appid={API_KEY}"
-    ).json()
 
-    aqi  = float(poll["list"][0]["main"]["aqi"])
-    comp = poll["list"][0]["components"]
+    # current AQI from Open-Meteo European scale
+    today  = datetime.now().strftime("%Y-%m-%d")
+    aq_url = (
+        f"https://air-quality-api.open-meteo.com/v1/air-quality?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&hourly=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,european_aqi"
+        f"&start_date={today}&end_date={today}"
+    )
+    aq_data = requests.get(aq_url).json()
+    hour    = min(datetime.now().hour, len(aq_data["hourly"]["european_aqi"]) - 1)
+
+    aqi   = aq_data["hourly"]["european_aqi"][hour]
+    pm2_5 = aq_data["hourly"]["pm2_5"][hour]
+    pm10  = aq_data["hourly"]["pm10"][hour]
+    no2   = aq_data["hourly"]["nitrogen_dioxide"][hour]
+    co    = aq_data["hourly"]["carbon_monoxide"][hour]
+    o3    = aq_data["hourly"]["ozone"][hour]
 
     return {
         "city":        CITY,
         "timestamp":   datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-        "aqi":         aqi,
-        "category":    aqi_label(aqi),
+        "aqi":         float(aqi) if aqi is not None else 0.0,
+        "category":    aqi_label(float(aqi) if aqi is not None else 0.0),
         "temperature": weather["main"]["temp"],
         "humidity":    weather["main"]["humidity"],
         "wind_speed":  weather["wind"]["speed"],
         "pollutants": {
-            "pm2_5": comp["pm2_5"],
-            "pm10":  comp["pm10"],
-            "no2":   comp["no2"],
-            "co":    comp["co"],
-            "o3":    comp["o3"]
+            "pm2_5": float(pm2_5) if pm2_5 is not None else 0.0,
+            "pm10":  float(pm10)  if pm10  is not None else 0.0,
+            "no2":   float(no2)   if no2   is not None else 0.0,
+            "co":    float(co)    if co    is not None else 0.0,
+            "o3":    float(o3)    if o3    is not None else 0.0,
         }
     }
 
-# 3-day forecast with default Ridge model
 @app.get("/forecast")
 def get_forecast():
-    return get_forecast_by_model("ridge")
+    return get_forecast_by_model("gradient_boosting")
 
-# 3-day forecast with selected model
 @app.get("/forecast/{model_name}")
 def get_forecast_by_model(model_name: str):
     model = get_model(model_name)
 
-    # load historical
-    client  = get_mongo_client()
-    db      = client["pearls_aqi"]
-    data    = list(db["aqi_engineered"].find({}, {"_id": 0, "aqi": 1, "timestamp": 1}))
+    client      = get_mongo_client()
+    db          = client["pearls_aqi"]
+    data        = list(db["aqi_engineered"].find(
+        {}, {"_id": 0, "aqi": 1, "timestamp": 1}
+    ).sort("timestamp", 1))
     client.close()
 
-    hist_df     = pd.DataFrame(data).sort_values("timestamp").reset_index(drop=True)
+    hist_df     = pd.DataFrame(data)
     aqi_history = hist_df["aqi"].tolist()
 
-    # fetch forecast weather
     forecast_url  = f"https://api.openweathermap.org/data/2.5/forecast?lat={LAT}&lon={LON}&appid={API_KEY}&units=metric"
     forecast_data = requests.get(forecast_url).json()
 
-    # fetch current pollution
-    poll = requests.get(
-        f"http://api.openweathermap.org/data/2.5/air_pollution?lat={LAT}&lon={LON}&appid={API_KEY}"
-    ).json()
-    comp = poll["list"][0]["components"]
+    today  = datetime.now().strftime("%Y-%m-%d")
+    aq_url = (
+        f"https://air-quality-api.open-meteo.com/v1/air-quality?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&hourly=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,european_aqi"
+        f"&start_date={today}&end_date={today}"
+    )
+    aq_data = requests.get(aq_url).json()
+    hour    = min(datetime.now().hour, len(aq_data["hourly"]["european_aqi"]) - 1)
+
+    pollution = {
+        "pm2_5": float(aq_data["hourly"]["pm2_5"][hour] or 0),
+        "pm10":  float(aq_data["hourly"]["pm10"][hour]  or 0),
+        "no2":   float(aq_data["hourly"]["nitrogen_dioxide"][hour] or 0),
+        "co":    float(aq_data["hourly"]["carbon_monoxide"][hour]  or 0),
+        "o3":    float(aq_data["hourly"]["ozone"][hour] or 0),
+    }
 
     now              = datetime.now(timezone.utc)
     season_map       = {"winter": 0, "spring": 1, "summer": 2, "autumn": 3}
@@ -204,11 +236,11 @@ def get_forecast_by_model(model_name: str):
             "temperature":         item["main"]["temp"],
             "humidity":            item["main"]["humidity"],
             "wind_speed":          item["wind"]["speed"],
-            "pm2_5":               comp["pm2_5"],
-            "pm10":                comp["pm10"],
-            "no2":                 comp["no2"],
-            "co":                  comp["co"],
-            "o3":                  comp["o3"],
+            "pm2_5":               pollution["pm2_5"],
+            "pm10":                pollution["pm10"],
+            "no2":                 pollution["no2"],
+            "co":                  pollution["co"],
+            "o3":                  pollution["o3"],
             "aqi_lag_1":           aqi_lag_1,
             "aqi_lag_3":           aqi_lag_3,
             "aqi_lag_24":          aqi_lag_24,
@@ -219,12 +251,9 @@ def get_forecast_by_model(model_name: str):
             "season":              sea_enc
         }])
 
-        if model_name == "gradient_boosting":
-            scaled = features[feature_cols]
-        else:
-            scaled = scaler.transform(features[feature_cols])
-
+        scaled   = scale_features(model_name, features)
         pred_aqi = float(max(0, model.predict(scaled)[0]))
+
         hourly_forecasts.append({
             "timestamp":     dt.strftime("%Y-%m-%d %H:%M:%S"),
             "date":          dt.strftime("%Y-%m-%d"),
@@ -248,14 +277,13 @@ def get_forecast_by_model(model_name: str):
     daily["category"]      = daily["predicted_aqi"].apply(aqi_label)
 
     return {
-        "city":       CITY,
-        "model_used": model_name,
-        "generated":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "daily_forecast": daily.to_dict("records"),
+        "city":            CITY,
+        "model_used":      model_name,
+        "generated":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "daily_forecast":  daily.to_dict("records"),
         "hourly_forecast": hourly_forecasts
     }
 
-# historical data
 @app.get("/historical")
 def get_historical(limit: int = 100):
     client = get_mongo_client()
@@ -270,13 +298,12 @@ def get_historical(limit: int = 100):
         "data":    data
     }
 
-# model info
 @app.get("/models")
 def get_models():
     return {
         "available_models": [
-            {"name": "ridge",             "r2": 1.0000, "rmse": 0.0662, "status": "primary"},
-            {"name": "lasso",             "r2": 0.9999, "rmse": 0.1469, "status": "secondary"},
-            {"name": "gradient_boosting", "r2": 0.9995, "rmse": 0.2710, "status": "secondary"},
+            {"name": "gradient_boosting", "r2": 0.9917, "rmse": 1.2187, "status": "primary"},
+            {"name": "random_forest",     "r2": 0.9846, "rmse": 1.6580, "status": "secondary"},
+            {"name": "ridge",             "r2": 0.8862, "rmse": 4.5046, "status": "secondary"},
         ]
     }
