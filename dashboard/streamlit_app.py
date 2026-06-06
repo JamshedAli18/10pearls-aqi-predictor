@@ -303,14 +303,14 @@ feature_cols = [
 def load_models():
     base   = os.path.dirname(os.path.abspath(__file__))
     models = os.path.join(base, "..", "models")
-    ridge  = joblib.load(os.path.join(models, "ridge.pkl"))
-    lasso  = joblib.load(os.path.join(models, "lasso.pkl"))
     gb     = joblib.load(os.path.join(models, "gradient_boosting.pkl"))
+    rf     = joblib.load(os.path.join(models, "random_forest.pkl"))
+    ridge  = joblib.load(os.path.join(models, "ridge.pkl"))
     scaler = joblib.load(os.path.join(models, "scaler.pkl"))
     le     = joblib.load(os.path.join(models, "label_encoder.pkl"))
-    return ridge, lasso, gb, scaler, le
+    return gb, rf, ridge, scaler, le
 
-ridge, lasso, gb, scaler, le = load_models()
+gb, rf, ridge, scaler, le = load_models()
 
 # ============================================================
 # SIDEBAR
@@ -320,22 +320,22 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### Prediction Model")
 selected_model_name = st.sidebar.selectbox(
     "Select model for forecast:",
-    ["Ridge Regression", "Lasso", "Gradient Boosting"],
+    ["Gradient Boosting", "Random Forest", "Ridge Regression"],
     index=0
 )
 model_map = {
+    "Gradient Boosting": gb,
+    "Random Forest":     rf,
     "Ridge Regression":  ridge,
-    "Lasso":             lasso,
-    "Gradient Boosting": gb
 }
 selected_model = model_map[selected_model_name]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Model Performance")
 perf_map = {
-    "Ridge Regression":  {"R²": "1.0000", "RMSE": "0.0662"},
-    "Lasso":             {"R²": "0.9999", "RMSE": "0.1469"},
-    "Gradient Boosting": {"R²": "0.9995", "RMSE": "0.2710"},
+    "Gradient Boosting": {"R²": "0.9917", "RMSE": "1.2187"},
+    "Random Forest":     {"R²": "0.9846", "RMSE": "1.6580"},
+    "Ridge Regression":  {"R²": "0.8862", "RMSE": "4.5046"},
 }
 perf = perf_map[selected_model_name]
 st.sidebar.markdown(f"**R² Score:** {perf['R²']}")
@@ -449,7 +449,7 @@ def run_forecast(model):
             "season":              sea_enc
         }])
 
-        if selected_model_name == "Gradient Boosting":
+        if selected_model_name in ["Gradient Boosting", "Random Forest"]:
             scaled = features[feature_cols]
         else:
             scaled = scaler.transform(features[feature_cols])
@@ -769,12 +769,12 @@ with tab3:
     st.markdown('<p class="section-sub">Evaluation metrics for all trained models</p>', unsafe_allow_html=True)
 
     metrics_df = pd.DataFrame([
-        {"Model": "Ridge Regression",   "R²": 1.0000, "RMSE": 0.0662, "MAE": 0.0438, "Verdict": "No overfitting", "Status": "Primary"},
-        {"Model": "Lasso",              "R²": 0.9999, "RMSE": 0.1469, "MAE": 0.1097, "Verdict": "No overfitting", "Status": "Secondary"},
-        {"Model": "Gradient Boosting",  "R²": 0.9995, "RMSE": 0.2710, "MAE": 0.1148, "Verdict": "No overfitting", "Status": "Secondary"},
-        {"Model": "Random Forest",      "R²": 0.9972, "RMSE": 0.6600, "MAE": 0.2758, "Verdict": "No overfitting", "Status": "Trained"},
-        {"Model": "ElasticNet",         "R²": 0.9960, "RMSE": 0.7914, "MAE": 0.5632, "Verdict": "No overfitting", "Status": "Trained"},
-        {"Model": "LSTM",               "R²": -19.10, "RMSE": 61.966, "MAE": 52.577, "Verdict": "Overfitting",    "Status": "Experimental"},
+        {"Model": "Gradient Boosting",  "R²": 0.9917, "RMSE": 1.2187, "MAE": 0.3714, "Verdict": "No overfitting", "Status": "Primary"},
+        {"Model": "Random Forest",      "R²": 0.9846, "RMSE": 1.6580, "MAE": 0.5181, "Verdict": "No overfitting", "Status": "Secondary"},
+        {"Model": "Ridge Regression",   "R²": 0.8862, "RMSE": 4.5046, "MAE": 2.5873, "Verdict": "No overfitting", "Status": "Secondary"},
+        {"Model": "Lasso",              "R²": 0.8833, "RMSE": 4.5620, "MAE": 2.5094, "Verdict": "No overfitting", "Status": "Trained"},
+        {"Model": "ElasticNet",         "R²": 0.8789, "RMSE": 4.6471, "MAE": 2.6446, "Verdict": "No overfitting", "Status": "Trained"},
+        {"Model": "LSTM",               "R²": -24.49, "RMSE": 67.358, "MAE": 61.343, "Verdict": "Overfitting",    "Status": "Experimental"},
     ])
     st.dataframe(metrics_df, use_container_width=True, hide_index=True)
 
