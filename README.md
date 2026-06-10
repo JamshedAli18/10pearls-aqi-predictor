@@ -8,7 +8,7 @@ A complete end-to-end machine learning pipeline for predicting Air Quality Index
 
 | Service | URL |
 |---|---|
-| React Frontend | https://pearls-aqi-frontend.vercel.app |
+| React Frontend | https://10pearls-aqi-predictor.vercel.app/ |
 | FastAPI Backend | https://pearls-aqi.onrender.com |
 | API Documentation | https://pearls-aqi.onrender.com/docs |
 | Streamlit Dashboard | https://10pearls-aqi-predictor-9ja3gnjph6biv392fykzwy.streamlit.app |
